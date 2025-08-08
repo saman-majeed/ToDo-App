@@ -47,8 +47,7 @@ import {
   query, 
   where, 
   onSnapshot,
-  getDocs,
-  setDoc 
+  getDocs
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
