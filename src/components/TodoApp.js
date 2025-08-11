@@ -1,42 +1,20 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Container,
-  Paper,
-  Typography,
-  TextField,
-  Button,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
-  IconButton,
-  Checkbox,
-  Box,
-  AppBar,
-  Toolbar,
-  Fab,
   Dialog,
   DialogTitle,
   DialogContent,
   DialogActions,
-  Chip,
+  TextField,
+  Button,
   Alert,
-  Collapse,
-  Divider
+  Box,
+  Typography
 } from '@mui/material';
 import {
   Add as AddIcon,
-  Delete as DeleteIcon,
-  Logout as LogoutIcon,
-  Check as CheckIcon,
-  Close as CloseIcon,
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon,
-  Description as DescriptionIcon,
-  Edit as EditIcon,
-  Save as SaveIcon,
-  Cancel as CancelIcon
+  Close as CloseIcon
 } from '@mui/icons-material';
+import TaskUploader from './TaskUploader';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   collection, 
@@ -47,14 +25,21 @@ import {
   query, 
   where, 
   onSnapshot,
-  getDocs
+  getDocs,
+  orderBy
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import DashboardLayout from './DashboardLayout';
+import Dashboard from './Dashboard';
+import TodoList from './TodoList';
+import Analytics from './Analytics';
+import { Teams, Documents, Settings } from './OtherViews';
 
 export default function TodoApp() {
   const [todos, setTodos] = useState([]);
   const [newTask, setNewTask] = useState('');
   const [newDescription, setNewDescription] = useState('');
+  const [selectedDueDate, setSelectedDueDate] = useState(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -123,41 +108,101 @@ export default function TodoApp() {
   }, [currentUser]);
 
   const addTask = async () => {
-    if (!newTask.trim()) return;
+    if (!newTask.trim()) {
+      setError('Please enter a task description');
+      return;
+    }
+
+    if (!currentUser) {
+      setError('You must be logged in to add tasks');
+      return;
+    }
 
     try {
       setLoading(true);
       setError('');
       
-      // Debug logs
-      console.log('Current user:', currentUser);
-      console.log('User ID:', currentUser?.uid);
-      console.log('Adding task:', newTask);
+      // Enhanced debug logs
+      console.log('🚀 Starting addTask function');
+      console.log('👤 Current user:', currentUser);
+      console.log('🆔 User ID:', currentUser?.uid);
+      console.log('📧 User email:', currentUser?.email);
+      console.log('🔒 User email verified:', currentUser?.emailVerified);
+      console.log('📝 Adding task:', newTask);
+      console.log('📅 Selected due date:', selectedDueDate);
+      console.log('📄 New description:', newDescription);
       
-      const docRef = await addDoc(collection(db, 'Tasks'), {
-        text: newTask,
+      // Test database connection first
+      console.log('🔗 Testing database connection...');
+      console.log('🏗️ Database object:', db);
+      console.log('📊 Collection reference test...');
+      
+      const taskData = {
+        text: newTask.trim(),
         completed: false,
         userId: currentUser.uid,
         createdAt: new Date()
-      });
+      };
       
-      console.log('Document written with ID: ', docRef.id);
+      // Add due date if selected (ensure it's a proper Date object)
+      if (selectedDueDate) {
+        try {
+          const dueDate = selectedDueDate instanceof Date ? selectedDueDate : new Date(selectedDueDate);
+          if (!isNaN(dueDate.getTime())) {
+            taskData.dueDate = dueDate;
+          }
+        } catch (dateError) {
+          console.warn('Invalid due date, skipping:', dateError);
+        }
+      }
+      
+      console.log('💾 Task data to save:', taskData);
+      
+      const docRef = await addDoc(collection(db, 'Tasks'), taskData);
+      
+      console.log('✅ Document written with ID:', docRef.id);
       
       // Add description to subcollection if provided
       if (newDescription.trim()) {
-        await addDescriptionToTask(docRef.id, newDescription);
+        try {
+          await addDescriptionToTask(docRef.id, newDescription.trim());
+          console.log('✅ Description added successfully');
+        } catch (descError) {
+          console.error('❌ Failed to add description:', descError);
+          // Don't fail the whole task creation if description fails
+        }
       }
       
+      // Clear form and close dialog
       setNewTask('');
       setNewDescription('');
+      setSelectedDueDate(null);
       setOpen(false);
+      
+      console.log('✅ Task added successfully');
+      
     } catch (error) {
-      console.error('Full error:', error);
-      console.error('Error code:', error.code);
-      console.error('Error message:', error.message);
-      setError('Failed to add task: ' + error.message);
+      console.error('❌ Full error object:', error);
+      console.error('❌ Error name:', error.name);
+      console.error('❌ Error code:', error.code);
+      console.error('❌ Error message:', error.message);
+      console.error('❌ Error stack:', error.stack);
+      
+      // More specific error messages
+      let errorMessage = 'Failed to add task';
+      
+      if (error.code === 'permission-denied') {
+        errorMessage = 'Permission denied. Please check your account permissions.';
+      } else if (error.code === 'unauthenticated') {
+        errorMessage = 'You must be logged in to add tasks.';
+      } else if (error.message) {
+        errorMessage = `Failed to add task: ${error.message}`;
+      }
+      
+      setError(errorMessage);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const toggleComplete = async (id, completed) => {
@@ -297,459 +342,145 @@ export default function TodoApp() {
     }
   };
 
+  // New state for the dashboard
+  const [currentView, setCurrentView] = useState('tasks');
+  const [darkMode, setDarkMode] = useState(false);
+  const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
+
   const completedCount = todos.filter(todo => todo.completed).length;
   const totalCount = todos.length;
 
-  return (
-    <Box sx={{ flexGrow: 1, minHeight: '100vh', bgcolor: '#f5f5f5' }}>
-      <AppBar position="static" sx={{ background: 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)' }}>
-        <Toolbar>
-          <Typography variant="h6" component="div" sx={{ flexGrow: 1, fontWeight: 'bold' }}>
-            My Todo App
-          </Typography>
-          <Typography variant="body2" sx={{ mr: 2 }}>
-            Welcome, {currentUser?.email}
-          </Typography>
-          <IconButton color="inherit" onClick={handleLogout}>
-            <LogoutIcon />
-          </IconButton>
-        </Toolbar>
-      </AppBar>
+  const handleViewChange = (view) => {
+    setCurrentView(view);
+  };
 
-      <Container maxWidth="md" sx={{ mt: 4, pb: 10 }}>
-        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+  const handleToggleDarkMode = () => {
+    setDarkMode(prev => !prev);
+  };
+
+  const handleAddTask = (date = null) => {
+    if (date) {
+      try {
+        // Ensure the date is a proper Date object
+        const validDate = date instanceof Date ? date : new Date(date);
+        if (!isNaN(validDate.getTime())) {
+          setSelectedDueDate(validDate);
+        } else {
+          console.warn('Invalid date provided to handleAddTask:', date);
+          setSelectedDueDate(null);
+        }
+      } catch (error) {
+        console.warn('Error processing date in handleAddTask:', error);
+        setSelectedDueDate(null);
+      }
+    } else {
+      setSelectedDueDate(null);
+    }
+    setOpen(true);
+  };
+
+  const handleUploadTasks = async (uploadedTasks) => {
+    try {
+      setError('');
+      
+      // Process each uploaded task
+      for (const task of uploadedTasks) {
+        const taskData = {
+          text: task.text,
+          completed: task.completed || false,
+          userId: currentUser.uid,
+          createdAt: new Date(),
+          source: 'file-upload'
+        };
         
-        <Paper 
-          elevation={3} 
-          sx={{ 
-            p: 3, 
-            borderRadius: 3,
-            background: 'linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%)'
-          }}
-        >
-          <Box sx={{ textAlign: 'center', mb: 3 }}>
-            <Typography 
-              variant="h4" 
-              sx={{ 
-                fontWeight: 'bold',
-                background: 'linear-gradient(45deg, #FF6B6B 30%, #4ECDC4 90%)',
-                backgroundClip: 'text',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-                mb: 2
-              }}
-            >
-              Your Tasks
-            </Typography>
-            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2 }}>
-              <Chip 
-                label={`Total: ${totalCount}`} 
-                color="primary" 
-                variant="outlined" 
-              />
-              <Chip 
-                label={`Completed: ${completedCount}`} 
-                color="success" 
-                variant="outlined" 
-              />
-              <Chip 
-                label={`Remaining: ${totalCount - completedCount}`} 
-                color="warning" 
-                variant="outlined" 
-              />
-            </Box>
-          </Box>
+        // Add due date if present
+        if (task.dueDate) {
+          taskData.dueDate = task.dueDate;
+        }
+        
+        const docRef = await addDoc(collection(db, 'Tasks'), taskData);
+        
+        // Add description if provided
+        if (task.description && task.description.trim()) {
+          await addDescriptionToTask(docRef.id, task.description);
+        }
+      }
+      
+      console.log(`Successfully uploaded ${uploadedTasks.length} tasks`);
+      
+    } catch (error) {
+      console.error('Failed to upload tasks:', error);
+      setError('Failed to upload tasks: ' + error.message);
+      throw error;
+    }
+  };
 
-          {todos.length === 0 ? (
-            <Box sx={{ textAlign: 'center', py: 6 }}>
-              <Typography variant="h6" color="text.secondary">
-                No tasks yet! Add your first task to get started.
-              </Typography>
-            </Box>
-          ) : (
-            <List>
-              {todos.map((todo) => (
-                <Paper
-                  key={todo.id}
-                  elevation={expandedTasks.has(todo.id) ? 4 : 2}
-                  sx={{
-                    mb: 2,
-                    borderRadius: 3,
-                    bgcolor: todo.completed ? '#f1f8e9' : '#fff',
-                    border: expandedTasks.has(todo.id) 
-                      ? '2px solid #4ECDC4' 
-                      : '1px solid #e0e0e0',
-                    overflow: 'hidden',
-                    transition: 'all 0.3s ease',
-                    transform: expandedTasks.has(todo.id) ? 'scale(1.02)' : 'scale(1)',
-                    '&:hover': {
-                      transform: 'scale(1.01)',
-                      boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
-                    }
-                  }}
-                >
-                  <ListItem
-                    onClick={() => toggleExpanded(todo.id)}
-                    sx={{
-                      cursor: 'pointer',
-                      transition: 'background-color 0.2s ease',
-                      '&:hover': {
-                        bgcolor: todo.completed ? '#e8f5e8' : 'rgba(76, 205, 196, 0.08)',
-                      },
-                      position: 'relative'
-                    }}
-                  >
-                    <Checkbox
-                      checked={todo.completed}
-                      onChange={(e) => {
-                        e.stopPropagation();
-                        toggleComplete(todo.id, todo.completed);
-                      }}
-                      color="success"
-                      sx={{
-                        '&:hover': {
-                          bgcolor: 'rgba(76, 175, 80, 0.08)'
-                        }
-                      }}
-                    />
-                    <ListItemText
-                      primary={
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
-                          <Typography
-                            sx={{
-                              textDecoration: todo.completed ? 'line-through' : 'none',
-                              opacity: todo.completed ? 0.7 : 1,
-                              fontWeight: 500,
-                              fontSize: '1.1rem'
-                            }}
-                          >
-                            {todo.text}
-                          </Typography>
-                          {taskDescriptions[todo.id] && (
-                            <Chip
-                              icon={<DescriptionIcon />}
-                              label="Click to view details"
-                              size="small"
-                              variant="outlined"
-                              color="primary"
-                              sx={{ 
-                                fontSize: '0.7rem', 
-                                height: 22,
-                                backgroundColor: 'rgba(33, 150, 243, 0.08)',
-                                animation: expandedTasks.has(todo.id) ? 'none' : 'pulse 2s infinite'
-                              }}
-                            />
-                          )}
-                          {!taskDescriptions[todo.id] && !loadingDescriptions.has(todo.id) && (
-                            <Chip
-                              label="No description"
-                              size="small"
-                              variant="outlined"
-                              color="default"
-                              sx={{ 
-                                fontSize: '0.65rem', 
-                                height: 20,
-                                opacity: 0.6
-                              }}
-                            />
-                          )}
-                          {loadingDescriptions.has(todo.id) && (
-                            <Chip
-                              label="Loading..."
-                              size="small"
-                              variant="outlined"
-                              color="default"
-                              sx={{ 
-                                fontSize: '0.65rem', 
-                                height: 20,
-                                opacity: 0.6
-                              }}
-                            />
-                          )}
-                        </Box>
-                      }
-                      secondary={
-                        expandedTasks.has(todo.id) && taskDescriptions[todo.id] ? (
-                          <Typography 
-                            variant="body2" 
-                            sx={{ 
-                              mt: 1, 
-                              fontStyle: 'italic',
-                              color: 'text.secondary'
-                            }}
-                          >
-                            Click again to hide details
-                          </Typography>
-                        ) : null
-                      }
-                      sx={{ ml: 1 }}
-                    />
-                    <ListItemSecondaryAction>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <IconButton
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleExpanded(todo.id);
-                          }}
-                          size="small"
-                          sx={{
-                            bgcolor: expandedTasks.has(todo.id) ? 'rgba(76, 205, 196, 0.1)' : 'transparent',
-                            '&:hover': {
-                              bgcolor: 'rgba(76, 205, 196, 0.2)',
-                              transform: 'scale(1.1)'
-                            },
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          {expandedTasks.has(todo.id) ? 
-                            <ExpandLessIcon sx={{ color: '#4ECDC4' }} /> : 
-                            <ExpandMoreIcon sx={{ color: '#666' }} />
-                          }
-                        </IconButton>
-                        {todo.completed && (
-                          <Chip 
-                            icon={<CheckIcon />} 
-                            label="Done!" 
-                            color="success" 
-                            size="small" 
-                            sx={{ 
-                              mr: 1,
-                              background: 'linear-gradient(45deg, #4CAF50 30%, #8BC34A 90%)',
-                              color: 'white',
-                              '& .MuiChip-icon': {
-                                color: 'white'
-                              }
-                            }}
-                          />
-                        )}
-                        <IconButton 
-                          edge="end" 
-                          aria-label="delete"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            deleteTask(todo.id);
-                          }}
-                          color="error"
-                          sx={{
-                            '&:hover': {
-                              bgcolor: 'rgba(244, 67, 54, 0.1)',
-                              transform: 'scale(1.1)'
-                            },
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          <DeleteIcon />
-                        </IconButton>
-                      </Box>
-                    </ListItemSecondaryAction>
-                  </ListItem>
-                  
-                  <Collapse in={expandedTasks.has(todo.id)} timeout={300}>
-                    <Divider sx={{ borderColor: '#4ECDC4', borderWidth: 1 }} />
-                    <Box 
-                      sx={{ 
-                        p: 3, 
-                        bgcolor: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                        background: taskDescriptions[todo.id] 
-                          ? 'linear-gradient(135deg, rgba(76, 205, 196, 0.05) 0%, rgba(255, 107, 107, 0.05) 100%)'
-                          : 'rgba(245, 245, 245, 0.8)',
-                        position: 'relative',
-                        '&::before': {
-                          content: '""',
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          right: 0,
-                          height: '3px',
-                          background: 'linear-gradient(90deg, #4ECDC4, #FF6B6B, #45B7D1)',
-                          borderRadius: '0 0 10px 10px'
-                        }
-                      }}
-                    >
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
-                        <DescriptionIcon sx={{ color: '#4ECDC4', fontSize: 20 }} />
-                        <Typography 
-                          variant="subtitle2" 
-                          sx={{ 
-                            color: '#4ECDC4', 
-                            fontWeight: 600,
-                            textTransform: 'uppercase',
-                            letterSpacing: 1
-                          }}
-                        >
-                          Task Details
-                        </Typography>
-                        <Box sx={{ marginLeft: 'auto' }}>
-                          {editingDescription === todo.id ? (
-                            <Box sx={{ display: 'flex', gap: 1 }}>
-                              <IconButton
-                                size="small"
-                                onClick={() => saveDescription(todo.id)}
-                                sx={{
-                                  color: '#4CAF50',
-                                  '&:hover': {
-                                    bgcolor: 'rgba(76, 175, 80, 0.1)',
-                                    transform: 'scale(1.1)'
-                                  }
-                                }}
-                              >
-                                <SaveIcon fontSize="small" />
-                              </IconButton>
-                              <IconButton
-                                size="small"
-                                onClick={cancelEditingDescription}
-                                sx={{
-                                  color: '#f44336',
-                                  '&:hover': {
-                                    bgcolor: 'rgba(244, 67, 54, 0.1)',
-                                    transform: 'scale(1.1)'
-                                  }
-                                }}
-                              >
-                                <CancelIcon fontSize="small" />
-                              </IconButton>
-                            </Box>
-                          ) : (
-                            <IconButton
-                              size="small"
-                              onClick={() => startEditingDescription(todo.id, taskDescriptions[todo.id])}
-                              sx={{
-                                color: '#4ECDC4',
-                                '&:hover': {
-                                  bgcolor: 'rgba(76, 205, 196, 0.1)',
-                                  transform: 'scale(1.1)'
-                                }
-                              }}
-                            >
-                              <EditIcon fontSize="small" />
-                            </IconButton>
-                          )}
-                        </Box>
-                      </Box>
-                      
-                      <Paper
-                        elevation={0}
-                        sx={{
-                          p: 2,
-                          bgcolor: 'rgba(255, 255, 255, 0.7)',
-                          borderRadius: 2,
-                          border: editingDescription === todo.id 
-                            ? '2px solid #4ECDC4' 
-                            : '1px dashed rgba(76, 205, 196, 0.3)',
-                          transition: 'border 0.3s ease'
-                        }}
-                      >
-                        {editingDescription === todo.id ? (
-                          <TextField
-                            fullWidth
-                            multiline
-                            rows={4}
-                            value={tempDescription}
-                            onChange={(e) => setTempDescription(e.target.value)}
-                            placeholder="Add a detailed description for this task..."
-                            variant="outlined"
-                            autoFocus
-                            sx={{
-                              '& .MuiOutlinedInput-root': {
-                                backgroundColor: 'rgba(255, 255, 255, 0.9)',
-                                '&:hover fieldset': {
-                                  borderColor: '#4ECDC4',
-                                },
-                                '&.Mui-focused fieldset': {
-                                  borderColor: '#4ECDC4',
-                                }
-                              }
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && e.ctrlKey) {
-                                saveDescription(todo.id);
-                              } else if (e.key === 'Escape') {
-                                cancelEditingDescription();
-                              }
-                            }}
-                          />
-                        ) : taskDescriptions[todo.id] ? (
-                          <Typography 
-                            variant="body1" 
-                            sx={{
-                              whiteSpace: 'pre-wrap',
-                              opacity: todo.completed ? 0.7 : 1,
-                              lineHeight: 1.6,
-                              color: '#444',
-                              minHeight: '24px'
-                            }}
-                          >
-                            {taskDescriptions[todo.id]}
-                          </Typography>
-                        ) : (
-                          <Box sx={{ textAlign: 'center', py: 2 }}>
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                color: 'text.secondary',
-                                fontStyle: 'italic',
-                                opacity: 0.7,
-                                mb: 2
-                              }}
-                            >
-                              No description added for this task yet.
-                            </Typography>
-                            <Button
-                              startIcon={<AddIcon />}
-                              onClick={() => startEditingDescription(todo.id, '')}
-                              variant="outlined"
-                              size="small"
-                              sx={{
-                                borderColor: '#4ECDC4',
-                                color: '#4ECDC4',
-                                '&:hover': {
-                                  borderColor: '#4ECDC4',
-                                  backgroundColor: 'rgba(76, 205, 196, 0.08)'
-                                }
-                              }}
-                            >
-                              Add Description
-                            </Button>
-                          </Box>
-                        )}
-                        
-                        {editingDescription === todo.id && (
-                          <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                            <Typography variant="caption" color="text.secondary">
-                              Press Ctrl+Enter to save, Esc to cancel
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {tempDescription.length} characters
-                            </Typography>
-                          </Box>
-                        )}
-                      </Paper>
-                    </Box>
-                  </Collapse>
-                </Paper>
-              ))}
-            </List>
-          )}
-        </Paper>
-      </Container>
+  const renderCurrentView = () => {
+    switch (currentView) {
+      case 'dashboard':
+        return (
+          <Dashboard 
+            todos={todos} 
+            onAddTask={handleAddTask} 
+            onToggleComplete={toggleComplete}
+            onDeleteTask={deleteTask}
+            darkMode={darkMode} 
+          />
+        );
+      case 'tasks':
+        return (
+          <TodoList 
+            todos={todos}
+            onToggleComplete={toggleComplete}
+            onDeleteTask={deleteTask}
+            onAddTask={handleAddTask}
+            onEditTask={null}
+            darkMode={darkMode}
+            taskDescriptions={taskDescriptions}
+            onUpdateDescription={null}
+            expandedTasks={expandedTasks}
+            onToggleExpanded={toggleExpanded}
+            editingDescription={editingDescription}
+            onStartEditingDescription={startEditingDescription}
+            onCancelEditingDescription={cancelEditingDescription}
+            onSaveDescription={saveDescription}
+            tempDescription={tempDescription}
+            onTempDescriptionChange={setTempDescription}
+            onUploadTasks={() => setUploadDialogOpen(true)}
+          />
+        );
+      case 'analytics':
+        return <Analytics todos={todos} darkMode={darkMode} />;
+      case 'teams':
+        return <Teams darkMode={darkMode} />;
+      case 'documents':
+        return <Documents todos={todos} taskDescriptions={taskDescriptions} darkMode={darkMode} />;
+      case 'settings':
+        return <Settings darkMode={darkMode} onToggleDarkMode={handleToggleDarkMode} />;
+      default:
+        return <Dashboard todos={todos} onAddTask={handleAddTask} darkMode={darkMode} />;
+    }
+  };
 
-      <Fab
-        color="primary"
-        aria-label="add"
-        onClick={() => setOpen(true)}
-        sx={{
-          position: 'fixed',
-          bottom: 16,
-          right: 16,
-          background: 'linear-gradient(45deg, #FF6B6B 30%, #4ECDC4 90%)',
-          '&:hover': {
-            background: 'linear-gradient(45deg, #FF5252 30%, #26A69A 90%)',
-          }
-        }}
+  return (
+    <Box>
+      {error && (
+        <Alert severity="error" sx={{ position: 'fixed', top: 80, left: 300, right: 20, zIndex: 1300 }}>
+          {error}
+        </Alert>
+      )}
+      
+      <DashboardLayout 
+        currentView={currentView} 
+        onViewChange={handleViewChange}
+        darkMode={darkMode}
+        onToggleDarkMode={handleToggleDarkMode}
+        taskCount={totalCount}
       >
-        <AddIcon />
-      </Fab>
+        {renderCurrentView()}
+      </DashboardLayout>
 
+      {/* Add Task Dialog */}
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle sx={{ 
           background: 'linear-gradient(45deg, #FF6B6B 30%, #4ECDC4 90%)',
@@ -757,6 +488,16 @@ export default function TodoApp() {
           fontWeight: 'bold'
         }}>
           Add New Task
+          {selectedDueDate && (
+            <Typography variant="body2" sx={{ opacity: 0.9, mt: 0.5 }}>
+              Scheduled for: {(selectedDueDate instanceof Date ? selectedDueDate : new Date(selectedDueDate)).toLocaleDateString('en-US', { 
+                weekday: 'long', 
+                year: 'numeric', 
+                month: 'long', 
+                day: 'numeric' 
+              })}
+            </Typography>
+          )}
         </DialogTitle>
         <DialogContent sx={{ pt: 3 }}>
           <TextField
@@ -807,6 +548,14 @@ export default function TodoApp() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Task Uploader Dialog */}
+      <TaskUploader 
+        open={uploadDialogOpen}
+        onClose={() => setUploadDialogOpen(false)}
+        onTasksUpload={handleUploadTasks}
+        darkMode={darkMode}
+      />
     </Box>
   );
 }

@@ -11,8 +11,13 @@ import {
 } from '@mui/material';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
+import { updateProfile } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 
 export default function SignUp() {
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordConfirm, setPasswordConfirm] = useState('');
@@ -24,7 +29,7 @@ export default function SignUp() {
   async function handleSubmit(e) {
     e.preventDefault();
 
-    if (!email || !password || !passwordConfirm) {
+    if (!firstName || !lastName || !email || !password || !passwordConfirm) {
       return setError('Please fill in all fields');
     }
 
@@ -39,7 +44,37 @@ export default function SignUp() {
     try {
       setError('');
       setLoading(true);
-      await signup(email, password);
+      
+      // Create user account
+      const userCredential = await signup(email, password);
+      const user = userCredential.user;
+      
+      // Update user profile with display name
+      const displayName = `${firstName} ${lastName}`;
+      await updateProfile(user, {
+        displayName: displayName
+      });
+      
+      // Create user profile document in Firestore
+      await setDoc(doc(db, 'users', user.uid), {
+        firstName,
+        lastName,
+        displayName,
+        email,
+        createdAt: new Date(),
+        settings: {
+          darkMode: false,
+          notifications: {
+            email: true,
+            push: false
+          },
+          privacy: {
+            profileVisible: true,
+            activityVisible: false
+          }
+        }
+      });
+      
       navigate('/');
     } catch (error) {
       setError('Failed to create an account: ' + error.message);
@@ -88,6 +123,31 @@ export default function SignUp() {
           {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
           
           <Box component="form" onSubmit={handleSubmit} sx={{ mt: 1 }}>
+            <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+              <TextField
+                margin="normal"
+                required
+                fullWidth
+                id="firstName"
+                label="First Name"
+                name="firstName"
+                autoComplete="given-name"
+                autoFocus
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+              />
+              <TextField
+                margin="normal"
+                required
+                fullWidth
+                id="lastName"
+                label="Last Name"
+                name="lastName"
+                autoComplete="family-name"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+              />
+            </Box>
             <TextField
               margin="normal"
               required
@@ -96,7 +156,6 @@ export default function SignUp() {
               label="Email Address"
               name="email"
               autoComplete="email"
-              autoFocus
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               sx={{ mb: 2 }}
